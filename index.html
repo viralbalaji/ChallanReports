@@ -50,8 +50,9 @@
             <input type="text" id="searchInput" placeholder="Search By Buyer Name Or Challan Number">
         </div>
 
-        <label for="monthYear">Month/Year:</label>
-        <input type="month" id="monthYear">
+        <div class="container">
+            <label for="monthYear">Month/Year:</label>
+        <input type="month" id="monthYear" name="monthYear">
 
         <label for="buyerName">Buyer Name:</label>
         <input type="text" id="buyerName" placeholder="Enter buyer name" required list="buyerSuggestions">
@@ -126,27 +127,28 @@ let GITHUB_CONFIG = {
 const bills = [];
 const buyerNames = new Map(); // Use a Map to store buyer names case-insensitively
 
-// Function to get the current month and year in "YYYY-MM" format
-function getCurrentMonthYear() {
+ // Function to get the selected month and year in the desired format (e.g., March_2025)
+ function getSelectedMonthYear() {
+    const monthYearInput = document.getElementById("monthYear").value;
+    if (!monthYearInput) return getCurrentMonthYear(); // Fallback to current month/year
+
+    const [year, month] = monthYearInput.split('-');
+    const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long' });
+    return `${monthName}_${year}`; // Format: March_2025
+}
+
+function setDefaultMonthYear() {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
-    return `${year}-${month}`; // Format: YYYY-MM
-}
-
-// Function to format month/year as (MARCH_2025)
-function formatMonthYear(monthYear) {
-    const [year, month] = monthYear.split('-');
-    const monthName = new Date(`${year}-${month}-01`).toLocaleString('default', { month: 'long' }).toUpperCase();
-    return `${monthName}_${year}`;
-}
-
-// Function to set the default value for the month/year input
-function setDefaultMonthYear() {
     const monthYearInput = document.getElementById("monthYear");
-    monthYearInput.value = getCurrentMonthYear(); // Set default value
+    monthYearInput.value = `${year}-${month}`; // Format: YYYY-MM
 }
 
+// Call this function on page load
+window.onload = function () {
+    setDefaultMonthYear();
+};
 // Function to handle the upload of the JSON file containing the GitHub token
 function handleTokenUpload(event) {
     const file = event.target.files[0];
@@ -316,35 +318,34 @@ function updateSummary() {
     }
 }
 
-// Function to download an image of a section
-function downloadImage(sectionId, fileName) {
-    if (bills.length === 0) {
-        alert("No entries to download.");
-        return; // Prevent the download if there are no entries
-    }
-
-    const section = document.getElementById(sectionId);
-
-    // Check if the section has no content
-    if (!section || section.innerHTML.trim() === '') {
-        alert("No entries to download.");
-        return; // Prevent download if the section is empty
-    }
-
-    html2canvas(section, {
-        ignoreElements: function (element) {
-            // Exclude the "Remove" button column (Action column)
-            const isRemoveButtonColumn = element.closest('td') && element.closest('td').cellIndex === 3;
-            const isActionHeader = element.tagName === 'TH' && element.textContent.trim() === 'Action';
-            return element.tagName === 'BUTTON' || isRemoveButtonColumn || isActionHeader;
+ function downloadImage(sectionId, fileName) {
+        if (bills.length === 0) {
+            alert("No entries to download.");
+            return; // Prevent the download if there are no entries
         }
-    }).then(canvas => {
-        const link = document.createElement('a');
-        link.href = canvas.toDataURL();
-        link.download = `${fileName}_${getCurrentMonthYear()}.png`;
-        link.click();
-    });
-}
+    
+        const section = document.getElementById(sectionId);
+        
+        // Check if the section has no content
+        if (!section || section.innerHTML.trim() === '') {
+            alert("No entries to download.");
+            return; // Prevent download the section is empty
+        }
+    
+        html2canvas(section, {
+            ignoreElements: function (element) {
+                // Exclude the "Remove" button column (Action column)
+                const isRemoveButtonColumn = element.closest('td') && element.closest('td').cellIndex === 3;
+                const isActionHeader = element.tagName === 'TH' && element.textContent.trim() === 'Action';
+                return element.tagName === 'BUTTON' || isRemoveButtonColumn || isActionHeader;
+            }
+        }).then(canvas => {
+            const link = document.createElement('a');
+            link.href = canvas.toDataURL();
+            link.download = `${fileName}_${getSelectedMonthYear()}.png`;
+            link.click();
+        });
+    }
 
 // Function to update buyer suggestions
 function updateBuyerSuggestions() {
@@ -443,9 +444,7 @@ function updateSummaryForFilteredData(filteredBills) {
 // Export data to GitHub and Local Storage
 async function exportData() {
     const dataStr = JSON.stringify(bills, null, 2);
-    const monthYear = document.getElementById("monthYear").value;
-    const formattedMonthYear = formatMonthYear(monthYear);
-    const fileName = `${formattedMonthYear}.json`;
+    const fileName = `${getSelectedMonthYear()}.json`; // Use the selected month/year as the filename
 
     // Download JSON file to the user's device
     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -479,8 +478,8 @@ async function exportData() {
     }
 }
 
-// Import data from GitHub
-async function importFromGitHub() {
+  // Import data from GitHub
+  async function importFromGitHub() {
     const url = `https://api.github.com/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents`;
     const response = await fetch(url, {
         headers: {
@@ -508,22 +507,12 @@ async function importFromGitHub() {
         monthSelect.id = 'monthSelect';
         document.querySelector('.import-options').appendChild(monthSelect);
     }
-
-    // Add a default "Select" option
-    monthSelect.innerHTML = `<option value="">Select</option>` +
-        jsonFiles.map(file => {
-            const monthYear = file.replace('.json', '');
-            const formattedMonthYear = formatMonthYear(monthYear);
-            return `<option value="${file}">${monthYear}</option>`;
-        }).join('');
-
+    monthSelect.innerHTML = jsonFiles.map(file => `<option value="${file}">${file.replace('.json', '')}</option>`).join('');
     monthSelect.style.display = "block";
 
     // Handle selection
     monthSelect.onchange = async function() {
         const selectedFile = this.value;
-        if (!selectedFile) return; // Do nothing if "Select" is chosen
-
         const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${selectedFile}`;
         const fileResponse = await fetch(fileUrl, {
             headers: {
@@ -581,7 +570,6 @@ async function importFromGitHub() {
         }
     };
 }
-
 // Import data from Local Storage
 function importData(event) {
     const file = event.target.files[0];
@@ -628,9 +616,12 @@ function importData(event) {
         } catch (error) {
             alert('Invalid JSON file.');
         }
+        
     };
+
     reader.readAsText(file);
 }
+         
          </script>
     
              </body>
