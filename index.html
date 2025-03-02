@@ -1,0 +1,638 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Challan Management</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <style>
+    
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #uploadSection {
+            text-align: center;
+            margin-top: 20%;
+        }
+        #mainContent {
+            display: none; /* Hide main content initially */
+        }
+        .container { max-width: 800px; margin: auto; padding: 20px; }
+        label { display: block; margin-top: 10px; }
+        input[type="month"], input[type="text"], input[type="number"] { width: 100%; padding: 8px; margin-top: 5px; }
+        button { margin-top: 20px; padding: 10px 20px; cursor: pointer; }
+        table { width: 100%; margin-top: 20px; border-collapse: collapse; }
+        th, td { padding: 10px; border: 1px solid #ddd; text-align: center; }
+        th { background-color: #f4f4f4; }
+        .section { margin-top: 20px; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9; }
+        .section-title { font-size: 1.2em; font-weight: bold; }
+        .remove-btn { color: red; cursor: pointer; }
+        .download-btn { margin-top: 10px; }
+        .error-message { color: red; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<!-- Upload Section (Visible Initially) -->
+<div id="uploadSection">
+    <h1>Challan Management System</h1>
+    <h5>Upload Your GitHub Token JSON File To Be Proceed.</h5>
+    <input type="file" id="tokenUpload" accept=".json">
+    <div id="errorMessage" class="error-message"></div>
+</div>
+
+<!-- Main Content (Hidden Initially) -->
+<div id="mainContent" style="display: none;">
+    <div class="container">
+        <!-- Search Bar -->
+        <div class="search-container">
+            <input type="text" id="searchInput" placeholder="Search By Buyer Name Or Challan Number">
+        </div>
+
+        <label for="monthYear">Month/Year:</label>
+        <input type="month" id="monthYear">
+
+        <label for="buyerName">Buyer Name:</label>
+        <input type="text" id="buyerName" placeholder="Enter buyer name" required list="buyerSuggestions">
+        <datalist id="buyerSuggestions"></datalist>
+
+        <label for="billAmount">Challan Amount:</label>
+        <input type="number" id="billAmount" placeholder="Enter Challan Amount" required>
+
+        <label for="billNumber">Challan Number:</label>
+        <input type="number" id="billNumber" placeholder="Enter Challan Number" required>
+
+        <button id="addChallanButton" onclick="addBill()">Add Challan</button>
+
+        <!-- Section 1: Bill Details -->
+        <div id="billDetailsSection" class="section" style="display:none;">
+            <div class="section-title">Challan Details</div>
+            <table id="billTable">
+                <thead>
+                    <tr>
+                        <th>Buyer Name</th>
+                        <th>Challan Amount</th>
+                        <th>Challan Number</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+            <button class="download-btn" onclick="downloadImage('billDetailsSection', 'Bill Details')">Download Challan Details</button>
+        </div>
+
+        <!-- Section 2: Buyer with Most Amount -->
+        <div id="topBuyerSection" class="section" style="display:none;">
+            <div class="section-title">Buyer with Most Amount</div>
+            <div id="topBuyer"></div>
+            <button class="download-btn" onclick="downloadImage('topBuyerSection', 'Buyer with Most Amount')">Download Buyer with Most Amount</button>
+        </div>
+
+        <!-- Section 3: All Buyers -->
+        <div id="allBuyersSection" class="section" style="display:none;">
+            <div class="section-title">All Buyers</div>
+            <div id="allBuyers"></div>
+            <button class="download-btn" onclick="downloadImage('allBuyersSection', 'All Buyers')">Download All Buyers</button>
+        </div>
+
+        <!-- Section 4: Overall Summary -->
+        <div id="overallSummarySection" class="section" style="display:none;">
+            <div class="section-title">Overall Summary</div>
+            <div id="overallSummary"></div>
+            <button class="download-btn" onclick="downloadImage('overallSummarySection', 'Overall Summary')">Download Overall Summary</button>
+        </div>
+    </div>
+
+    <!-- Export/Import Options -->
+    <div class="section">
+        <button onclick="exportData()">Export Data (JSON)</button>
+        <input type="file" id="importFile" accept=".json" onchange="importData(event)">
+        <div class="import-options">
+            <button onclick="importFromGitHub()">Import from GitHub</button>
+            <select id="monthSelect" style="display:none;"></select>
+        </div>
+    </div>
+</div>
+
+<script>
+// GitHub Configuration (will be populated after uploading the JSON file)
+let GITHUB_CONFIG = {
+    TOKEN: '', // Will be set after uploading the JSON file
+    REPO: 'CHALLAN-SUMMARY',   // Replace with your GitHub repository name
+    OWNER: 'viralbalaji' // Replace with your GitHub username
+};
+
+const bills = [];
+const buyerNames = new Map(); // Use a Map to store buyer names case-insensitively
+
+// Function to get the current month and year in "YYYY-MM" format
+function getCurrentMonthYear() {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
+    return `${year}-${month}`; // Format: YYYY-MM
+}
+
+// Function to format month/year as (MARCH_2025)
+function formatMonthYear(monthYear) {
+    const [year, month] = monthYear.split('-');
+    const monthName = new Date(`${year}-${month}-01`).toLocaleString('default', { month: 'long' }).toUpperCase();
+    return `${monthName}_${year}`;
+}
+
+// Function to set the default value for the month/year input
+function setDefaultMonthYear() {
+    const monthYearInput = document.getElementById("monthYear");
+    monthYearInput.value = getCurrentMonthYear(); // Set default value
+}
+
+// Function to handle the upload of the JSON file containing the GitHub token
+function handleTokenUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const tokenData = JSON.parse(e.target.result);
+
+            // Validate the JSON structure
+            if (!tokenData.githubToken) {
+                throw new Error('Invalid JSON structure. Missing "githubToken" key.');
+            }
+
+            // Set the GitHub token
+            GITHUB_CONFIG.TOKEN = tokenData.githubToken;
+
+            // Hide the upload section and show the main content
+            document.getElementById("uploadSection").style.display = "none";
+            document.getElementById("mainContent").style.display = "block";
+
+            // Initialize the page
+            setDefaultMonthYear(); // Set default value for month/year input
+
+        } catch (error) {
+            // Show error message for invalid JSON files
+            document.getElementById("errorMessage").textContent = "Invalid JSON file. Please upload a valid JSON file.";
+        }
+    };
+    reader.readAsText(file);
+}
+
+// Add event listener for the token upload input
+document.getElementById("tokenUpload").addEventListener("change", handleTokenUpload);
+
+// Function to add a bill
+function addBill() {
+    const monthYear = document.getElementById("monthYear").value;
+    let buyerName = document.getElementById("buyerName").value.trim().toLowerCase(); // Normalize to lower case
+    const billNumber = parseInt(document.getElementById("billNumber").value);
+    const billAmount = parseFloat(document.getElementById("billAmount").value);
+
+    if (!monthYear || !buyerName || !billNumber || isNaN(billAmount)) {
+        alert("Please fill in all fields correctly.");
+        return;
+    }
+
+    // Normalize the buyer name to be case-insensitive
+    buyerName = buyerName.toLowerCase();
+
+    const isDuplicateBill = bills.some(bill => bill.billNumber === billNumber);
+    if (isDuplicateBill) {
+        alert("Bill number already exists. Please use a unique bill number.");
+        return;
+    }
+
+    // Add or update buyer in the map
+    if (!buyerNames.has(buyerName)) {
+        buyerNames.set(buyerName, []);
+    }
+    buyerNames.get(buyerName).push({ monthYear, billNumber, billAmount });
+
+    bills.push({ monthYear, buyerName, billNumber, billAmount });
+
+    updateTable();
+    updateSummary();
+    clearInputs();
+
+    document.getElementById("billDetailsSection").style.display = "block";
+    document.getElementById("topBuyerSection").style.display = "block";
+    document.getElementById("allBuyersSection").style.display = "block";
+    document.getElementById("overallSummarySection").style.display = "block";
+
+    updateBuyerSuggestions();
+}
+
+// Function to clear input fields
+function clearInputs() {
+    document.getElementById("buyerName").value = "";
+    document.getElementById("billAmount").value = "";
+    document.getElementById("billNumber").value = "";
+}
+
+// Function to update the table with bills
+function updateTable() {
+    const tableBody = document.querySelector("#billTable tbody");
+    tableBody.innerHTML = "";
+
+    const sortedBills = [...bills].sort((a, b) => a.billNumber - b.billNumber);
+    sortedBills.forEach(bill => {
+        const row = tableBody.insertRow();
+        row.insertCell(0).textContent = bill.buyerName;
+        row.insertCell(1).innerHTML = `<strong>₹</strong>${bill.billAmount.toFixed(2)}`;
+        row.insertCell(2).textContent = bill.billNumber;
+
+        // Add the remove button in the "Action" column
+        const removeBtn = document.createElement("button");
+        removeBtn.textContent = "Remove";
+        removeBtn.classList.add("remove-btn");
+        removeBtn.onclick = function () { removeBill(bill.billNumber); };
+        row.insertCell(3).appendChild(removeBtn);
+    });
+}
+
+// Function to remove a bill
+function removeBill(billNumber) {
+    const index = bills.findIndex(bill => bill.billNumber === billNumber);
+    if (index > -1) {
+        bills.splice(index, 1);
+    }
+    updateTable();
+    updateSummary();
+}
+
+// Function to update the summary
+function updateSummary() {
+    if (bills.length === 0) {
+        document.getElementById("topBuyer").innerHTML = '';
+        document.getElementById("allBuyers").innerHTML = '';
+        document.getElementById("overallSummary").innerHTML = '';
+        return;  // Exit early if no bills
+    }
+
+    const buyerTotals = {};
+    let totalAmount = 0;
+
+    // Aggregate total amounts per buyer
+    bills.forEach(bill => {
+        if (!buyerTotals[bill.buyerName]) {
+            buyerTotals[bill.buyerName] = { count: 0, totalAmount: 0 };
+        }
+        buyerTotals[bill.buyerName].count += 1;
+        buyerTotals[bill.buyerName].totalAmount += bill.billAmount;
+        totalAmount += bill.billAmount;
+    });
+
+    const sortedBuyers = Object.entries(buyerTotals)
+        .sort((a, b) => b[1].totalAmount - a[1].totalAmount); // Sort by total amount, descending
+
+    // Update All Buyers Section
+    document.getElementById("allBuyers").innerHTML = sortedBuyers.map(([buyer, data]) => `
+        <p><strong>${buyer}</strong> - Challans: ${data.count}, Total Amount: <b>₹ </b>${data.totalAmount.toFixed(2)}</p>
+    `).join('');
+
+    const uniqueBuyerCount = sortedBuyers.length;
+
+    // Update Overall Summary
+    document.getElementById("overallSummary").innerHTML = `
+        <p><strong>Total Buyers:</strong> ${uniqueBuyerCount}</p>
+        <p><strong>Total Challans by All Buyers:</strong> ${bills.length}</p>
+        <p><strong>Average Amount per Challan:</strong> <b>₹ </b>${(totalAmount / bills.length).toFixed(2)}</p>
+        <p><strong>Total Amount of All Challans:</strong> <b>₹ </b><u>${totalAmount.toFixed(2)}</u></p>
+    `;
+
+    // Update Top Buyer Section
+    const topBuyer = sortedBuyers[0];
+    if (topBuyer) {
+        const [buyerName, data] = topBuyer;
+        const topBuyerAverageAmount = (data.totalAmount / data.count).toFixed(2);
+        document.getElementById("topBuyer").innerHTML = `
+            <p><strong>Buyer with Most Amount:</strong> <u>${buyerName}</u></p>
+            <p><strong>Total Challans by '${buyerName}' :</strong> ${data.count}</p>
+            <p><strong>Average Bill Amount for '${buyerName}' :</strong> <b>₹ </b>${topBuyerAverageAmount}</p>
+            <p><strong>Total Amount for '${buyerName}' :</strong> <b>₹ </b><u>${data.totalAmount.toFixed(2)}</u></p>
+        `;
+    }
+}
+
+// Function to download an image of a section
+function downloadImage(sectionId, fileName) {
+    if (bills.length === 0) {
+        alert("No entries to download.");
+        return; // Prevent the download if there are no entries
+    }
+
+    const section = document.getElementById(sectionId);
+
+    // Check if the section has no content
+    if (!section || section.innerHTML.trim() === '') {
+        alert("No entries to download.");
+        return; // Prevent download if the section is empty
+    }
+
+    html2canvas(section, {
+        ignoreElements: function (element) {
+            // Exclude the "Remove" button column (Action column)
+            const isRemoveButtonColumn = element.closest('td') && element.closest('td').cellIndex === 3;
+            const isActionHeader = element.tagName === 'TH' && element.textContent.trim() === 'Action';
+            return element.tagName === 'BUTTON' || isRemoveButtonColumn || isActionHeader;
+        }
+    }).then(canvas => {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL();
+        link.download = `${fileName}_${getCurrentMonthYear()}.png`;
+        link.click();
+    });
+}
+
+// Function to update buyer suggestions
+function updateBuyerSuggestions() {
+    const buyerSuggestions = Array.from(buyerNames.keys()).map(name => name.charAt(0).toUpperCase() + name.slice(1));
+    const buyerSuggestionsList = document.getElementById('buyerSuggestions');
+    buyerSuggestionsList.innerHTML = "";
+    buyerSuggestions.forEach(suggestion => {
+        const option = document.createElement('option');
+        option.value = suggestion;
+        buyerSuggestionsList.appendChild(option);
+    });
+}
+
+// Handle Enter key for moving between inputs and adding the challan
+document.getElementById("buyerName").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+        document.getElementById("billAmount").focus();
+    }
+});
+document.getElementById("billAmount").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+        document.getElementById("billNumber").focus();
+    }
+});
+document.getElementById("billNumber").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+        addBill();
+        document.getElementById("buyerName").focus();  // Focus back to the "Buyer Name" field
+    }
+});
+
+// Search functionality
+document.getElementById('searchInput').addEventListener('input', function () {
+    const query = this.value.toLowerCase();
+    const topBuyerSection = document.getElementById("topBuyerSection");
+
+    if (query === "") {
+        // Reset to original data
+        updateTable();
+        updateSummary(); // Recalculate and display sorted by total bill amount
+        topBuyerSection.style.display = "block"; // Show the top buyer section again
+    } else {
+        // Hide the top buyer section during search
+        topBuyerSection.style.display = "none";
+
+        // Filter bills based on the query (searching by buyer name or bill number)
+        const filteredBills = bills.filter(bill =>
+            bill.buyerName.toLowerCase().includes(query) ||
+            String(bill.billNumber).includes(query)
+        );
+
+        // Update Bill Details Table
+        const tableBody = document.querySelector('#billTable tbody');
+        tableBody.innerHTML = filteredBills
+            .map(bill => `
+                <tr>
+                    <td>${bill.buyerName}</td>
+                    <td>₹${bill.billAmount.toFixed(2)}</td>
+                    <td>${bill.billNumber}</td>
+                    <td><button class="remove-btn" onclick="removeBill(${bill.billNumber})">Remove</button></td>
+                </tr>
+            `).join('');
+
+        // Update All Buyers Section and Overall Summary
+        updateSummaryForFilteredData(filteredBills);
+    }
+});
+
+function updateSummaryForFilteredData(filteredBills) {
+    const allBuyersSection = document.getElementById("allBuyers");
+    const overallSummarySection = document.getElementById("overallSummary");
+
+    if (filteredBills.length === 0) {
+        allBuyersSection.innerHTML = `<p>No matching results found.</p>`;
+        overallSummarySection.innerHTML = `<p>No matching results found.</p>`;
+        return; // Exit if no results
+    }
+
+    // Update All Buyers Section
+    allBuyersSection.innerHTML = filteredBills.map(bill => `
+        <p><strong>${bill.buyerName}</strong> - Bill Number: ${bill.billNumber}, Amount: ₹${bill.billAmount.toFixed(2)}</p>
+    `).join('');
+
+    // Calculate summary data
+    const totalAmount = filteredBills.reduce((sum, bill) => sum + bill.billAmount, 0);
+    const averageAmount = (totalAmount / filteredBills.length).toFixed(2);
+
+    // Update Overall Summary Section
+    overallSummarySection.innerHTML = `
+        <p><strong>Total Challans:</strong> ${filteredBills.length}</p>
+        <p><strong>Average Amount per Challan:</strong> ₹${averageAmount}</p>
+        <p><strong>Total Amount:</strong> ₹${totalAmount.toFixed(2)}</p>
+    `;
+}
+
+// Export data to GitHub and Local Storage
+async function exportData() {
+    const dataStr = JSON.stringify(bills, null, 2);
+    const monthYear = document.getElementById("monthYear").value;
+    const formattedMonthYear = formatMonthYear(monthYear);
+    const fileName = `${formattedMonthYear}.json`;
+
+    // Download JSON file to the user's device
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    // Save to GitHub
+    const githubUrl = `https://api.github.com/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${fileName}`;
+    const content = btoa(unescape(encodeURIComponent(dataStr))); // Encode to base64
+
+    const response = await fetch(githubUrl, {
+        method: 'PUT',
+        headers: {
+            'Authorization': `token ${GITHUB_CONFIG.TOKEN}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            message: `Add ${fileName}`,
+            content: content
+        })
+    });
+
+    if (response.ok) {
+        alert('Data exported to GitHub and downloaded to your device.');
+    } else {
+        alert('Failed to export data to GitHub.');
+    }
+}
+
+// Import data from GitHub
+async function importFromGitHub() {
+    const url = `https://api.github.com/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents`;
+    const response = await fetch(url, {
+        headers: {
+            'Authorization': `token ${GITHUB_CONFIG.TOKEN}`
+        }
+    });
+
+    if (!response.ok) {
+        alert('Failed to fetch files from GitHub.');
+        return;
+    }
+
+    const files = await response.json();
+    const jsonFiles = files.filter(file => file.name.endsWith('.json')).map(file => file.name);
+
+    if (jsonFiles.length === 0) {
+        alert('No JSON files found in the repository.');
+        return;
+    }
+
+    // Display dropdown for selecting a file
+    let monthSelect = document.getElementById('monthSelect');
+    if (!monthSelect) {
+        monthSelect = document.createElement('select');
+        monthSelect.id = 'monthSelect';
+        document.querySelector('.import-options').appendChild(monthSelect);
+    }
+
+    // Add a default "Select" option
+    monthSelect.innerHTML = `<option value="">Select</option>` +
+        jsonFiles.map(file => {
+            const monthYear = file.replace('.json', '');
+            const formattedMonthYear = formatMonthYear(monthYear);
+            return `<option value="${file}">${monthYear}</option>`;
+        }).join('');
+
+    monthSelect.style.display = "block";
+
+    // Handle selection
+    monthSelect.onchange = async function() {
+        const selectedFile = this.value;
+        if (!selectedFile) return; // Do nothing if "Select" is chosen
+
+        const fileUrl = `https://api.github.com/repos/${GITHUB_CONFIG.OWNER}/${GITHUB_CONFIG.REPO}/contents/${selectedFile}`;
+        const fileResponse = await fetch(fileUrl, {
+            headers: {
+                'Authorization': `token ${GITHUB_CONFIG.TOKEN}`
+            }
+        });
+
+        if (!fileResponse.ok) {
+            alert('Failed to fetch the selected file.');
+            return;
+        }
+
+        const fileData = await fileResponse.json();
+        const content = atob(fileData.content); // Decode from Base64
+
+        try {
+            const importedData = JSON.parse(content);
+
+            // Validate imported data structure
+            if (!Array.isArray(importedData) || importedData.some(bill =>
+                typeof bill.monthYear !== "string" ||
+                typeof bill.buyerName !== "string" ||
+                typeof bill.billNumber !== "number" ||
+                typeof bill.billAmount !== "number"
+            )) {
+                throw new Error('Invalid JSON structure.');
+            }
+
+            // Clear existing data and add imported data
+            bills.length = 0;
+            buyerNames.clear();
+            importedData.forEach(bill => {
+                bills.push(bill);
+                const buyerName = bill.buyerName.toLowerCase();
+                if (!buyerNames.has(buyerName)) {
+                    buyerNames.set(buyerName, []);
+                }
+                buyerNames.get(buyerName).push(bill);
+            });
+
+            // Update UI
+            updateTable();
+            updateSummary();
+            updateBuyerSuggestions();
+
+            // Show relevant sections
+            document.getElementById("billDetailsSection").style.display = "block";
+            document.getElementById("topBuyerSection").style.display = "block";
+            document.getElementById("allBuyersSection").style.display = "block";
+            document.getElementById("overallSummarySection").style.display = "block";
+
+            alert('Data imported successfully.');
+        } catch (error) {
+            alert('Invalid JSON file.');
+        }
+    };
+}
+
+// Import data from Local Storage
+function importData(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const importedData = JSON.parse(e.target.result);
+
+            // Validate imported data structure
+            if (!Array.isArray(importedData) || importedData.some(bill =>
+                typeof bill.monthYear !== "string" ||
+                typeof bill.buyerName !== "string" ||
+                typeof bill.billNumber !== "number" ||
+                typeof bill.billAmount !== "number"
+            )) {
+                throw new Error('Invalid JSON structure.');
+            }
+
+            // Clear existing data and add imported data
+            bills.length = 0; 
+            buyerNames.clear();
+            importedData.forEach(bill => {
+                bills.push(bill);
+                const buyerName = bill.buyerName.toLowerCase();
+                if (!buyerNames.has(buyerName)) {
+                    buyerNames.set(buyerName, []);
+                }
+                buyerNames.get(buyerName).push(bill);
+            });
+
+            // Update the UI
+            updateTable();
+            updateSummary();
+            updateBuyerSuggestions();
+
+            // Show relevant sections
+            document.getElementById("billDetailsSection").style.display = "block";
+            document.getElementById("topBuyerSection").style.display = "block";
+            document.getElementById("allBuyersSection").style.display = "block";
+            document.getElementById("overallSummarySection").style.display = "block";
+
+        } catch (error) {
+            alert('Invalid JSON file.');
+        }
+    };
+    reader.readAsText(file);
+}
+         </script>
+    
+             </body>
+
+                 </html>
